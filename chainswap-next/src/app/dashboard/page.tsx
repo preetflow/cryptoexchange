@@ -16,7 +16,19 @@ import {
   Bell,
   Settings,
   List,
+  Save,
+  AlertCircle,
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface Trade {
   id: string;
@@ -62,6 +74,16 @@ export default function DashboardPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Settings form state
+  const [walletAddress, setWalletAddress] = useState("");
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [offerToDelete, setOfferToDelete] = useState<string | null>(null);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
@@ -89,6 +111,11 @@ export default function DashboardPage() {
     loadData();
   }, [loadData]);
 
+  // Pre-fill wallet address from user context
+  useEffect(() => {
+    if (user?.wallet_address) setWalletAddress(user.wallet_address);
+  }, [user]);
+
   const toggleOffer = async (offerId: string) => {
     try {
       await api.patch(`/offers/${offerId}/toggle`);
@@ -100,13 +127,61 @@ export default function DashboardPage() {
   };
 
   const deleteOffer = async (offerId: string) => {
-    if (!window.confirm("Delete this offer?")) return;
+    setOfferToDelete(offerId);
+    setDeleteConfirmOpen(true);
+  };
+
+  const confirmDeleteOffer = async () => {
+    if (!offerToDelete) return;
     try {
-      await api.delete(`/offers/${offerId}`);
+      await api.delete(`/offers/${offerToDelete}`);
       toast.success("Offer deleted");
       loadData();
     } catch {
-      toast.error("Failed");
+      toast.error("Failed to delete offer");
+    } finally {
+      setDeleteConfirmOpen(false);
+      setOfferToDelete(null);
+    }
+  };
+
+  const saveWalletAddress = async () => {
+    setSettingsSaving(true);
+    try {
+      await api.patch("/users/me", { wallet_address: walletAddress });
+      toast.success("Wallet address updated");
+    } catch {
+      toast.error("Failed to update wallet address");
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+  const changePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPassword !== confirmPassword) {
+      toast.error("Passwords do not match");
+      return;
+    }
+    if (newPassword.length < 8) {
+      toast.error("Password must be at least 8 characters");
+      return;
+    }
+    setPasswordSaving(true);
+    try {
+      await api.patch("/users/me/password", {
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      toast.success("Password changed successfully");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      toast.error(axiosErr?.response?.data?.detail || "Failed to change password");
+    } finally {
+      setPasswordSaving(false);
     }
   };
 
@@ -453,41 +528,181 @@ export default function DashboardPage() {
 
             {/* Settings Tab */}
             {tab === "settings" && (
-              <div
-                className="bg-card rounded-2xl p-6 border border-border"
-                data-testid="dashboard-settings"
-              >
-                <h3 className="font-semibold text-foreground mb-6">
-                  Profile Settings
-                </h3>
-                <div className="space-y-4">
-                  {[
-                    { label: "Username", value: user?.username },
-                    { label: "Email", value: user?.email },
-                    {
-                      label: "Wallet Address",
-                      value: user?.wallet_address || "Not set",
-                    },
-                    {
-                      label: "Member Since",
-                      value: user?.created_at
-                        ? new Date(user.created_at).toLocaleDateString()
-                        : "N/A",
-                    },
-                  ].map((field) => (
-                    <div key={field.label} className="p-4 bg-surface rounded-xl">
-                      <p className="text-xs text-muted-foreground mb-1">
-                        {field.label}
-                      </p>
-                      <p className="text-foreground font-medium">{field.value}</p>
+              <div className="space-y-6" data-testid="dashboard-settings">
+                {/* Profile Info */}
+                <div className="bg-card rounded-2xl p-6 border border-border">
+                  <h3 className="font-semibold text-foreground mb-1">Account Info</h3>
+                  <p className="text-xs text-muted-foreground mb-5">
+                    Your account details (read-only fields cannot be changed)
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {[
+                      { label: "Username", value: user?.username, readOnly: true },
+                      { label: "Email", value: user?.email, readOnly: true },
+                      {
+                        label: "Member Since",
+                        value: user?.created_at
+                          ? new Date(user.created_at).toLocaleDateString()
+                          : "N/A",
+                        readOnly: true,
+                      },
+                      {
+                        label: "Completion Rate",
+                        value: `${user?.completion_rate || 0}%`,
+                        readOnly: true,
+                      },
+                    ].map((field) => (
+                      <div key={field.label}>
+                        <label className="text-xs text-muted-foreground block mb-1.5">
+                          {field.label}
+                        </label>
+                        <div className="px-4 py-2.5 bg-surface border border-input rounded-xl text-sm text-muted-foreground">
+                          {field.value}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Wallet Address */}
+                <div className="bg-card rounded-2xl p-6 border border-border">
+                  <h3 className="font-semibold text-foreground mb-1">USDT Wallet Address</h3>
+                  <p className="text-xs text-muted-foreground mb-5">
+                    Your TRC-20 / ERC-20 wallet address for receiving USDT
+                  </p>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-xs text-muted-foreground block mb-1.5">
+                        Wallet Address
+                      </label>
+                      <input
+                        type="text"
+                        value={walletAddress}
+                        onChange={(e) => setWalletAddress(e.target.value)}
+                        placeholder="e.g. TRX...ABC or 0x..."
+                        className="w-full px-4 py-2.5 bg-surface border border-input rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none font-mono"
+                        data-testid="wallet-address-input"
+                      />
                     </div>
-                  ))}
+                    {!walletAddress && (
+                      <div className="flex items-center gap-2 text-amber-400 text-xs">
+                        <AlertCircle className="size-3.5" />
+                        <span>
+                          Set your wallet address before accepting sell orders
+                        </span>
+                      </div>
+                    )}
+                    <button
+                      onClick={saveWalletAddress}
+                      disabled={settingsSaving}
+                      className="flex items-center gap-2 px-5 py-2 bg-primary text-primary-foreground text-sm font-semibold rounded-full hover:opacity-90 transition-opacity disabled:opacity-50"
+                      data-testid="save-wallet-btn"
+                    >
+                      <Save className="size-4" />
+                      {settingsSaving ? "Saving..." : "Save Wallet Address"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Change Password */}
+                <div className="bg-card rounded-2xl p-6 border border-border">
+                  <h3 className="font-semibold text-foreground mb-1">Change Password</h3>
+                  <p className="text-xs text-muted-foreground mb-5">
+                    Use a strong password with at least 8 characters
+                  </p>
+                  <form onSubmit={changePassword} className="space-y-4">
+                    <div>
+                      <label className="text-xs text-muted-foreground block mb-1.5">
+                        Current Password
+                      </label>
+                      <input
+                        type="password"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        placeholder="Enter current password"
+                        className="w-full px-4 py-2.5 bg-surface border border-input rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+                        data-testid="current-password-input"
+                        required
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-xs text-muted-foreground block mb-1.5">
+                          New Password
+                        </label>
+                        <input
+                          type="password"
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          placeholder="Min. 8 characters"
+                          className="w-full px-4 py-2.5 bg-surface border border-input rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+                          data-testid="new-password-input"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-muted-foreground block mb-1.5">
+                          Confirm New Password
+                        </label>
+                        <input
+                          type="password"
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          placeholder="Re-enter new password"
+                          className={`w-full px-4 py-2.5 bg-surface border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none ${
+                            confirmPassword && confirmPassword !== newPassword
+                              ? "border-destructive focus:border-destructive"
+                              : "border-input focus:border-primary"
+                          }`}
+                          data-testid="confirm-password-input"
+                          required
+                        />
+                      </div>
+                    </div>
+                    {confirmPassword && confirmPassword !== newPassword && (
+                      <p className="text-xs text-destructive flex items-center gap-1">
+                        <AlertCircle className="size-3.5" /> Passwords do not match
+                      </p>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={passwordSaving}
+                      className="flex items-center gap-2 px-5 py-2 bg-primary text-primary-foreground text-sm font-semibold rounded-full hover:opacity-90 transition-opacity disabled:opacity-50"
+                      data-testid="change-password-btn"
+                    >
+                      <Save className="size-4" />
+                      {passwordSaving ? "Saving..." : "Update Password"}
+                    </button>
+                  </form>
                 </div>
               </div>
             )}
           </>
         )}
       </main>
+
+      {/* Delete Offer Confirmation */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent className="bg-card border-border">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-foreground">Delete Offer</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">
+              Are you sure you want to delete this offer? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-border text-foreground hover:bg-muted">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteOffer}
+              className="bg-destructive text-destructive-foreground hover:opacity-90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -19,7 +19,26 @@ import {
   MessageCircle,
   Wifi,
   WifiOff,
+  Star,
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "";
 
@@ -78,6 +97,19 @@ export default function TradePage({
   const [loading, setLoading] = useState(true);
   const [timeLeft, setTimeLeft] = useState<string | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
+
+  // Dispute modal
+  const [disputeOpen, setDisputeOpen] = useState(false);
+  const [disputeReason, setDisputeReason] = useState("");
+  const [disputeSubmitting, setDisputeSubmitting] = useState(false);
+
+  // Review state
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState("");
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewSubmitted, setReviewSubmitted] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -157,9 +189,7 @@ export default function TradePage({
       }
     };
 
-    ws.onerror = () => {
-      setWsConnected(false);
-    };
+    ws.onerror = () => setWsConnected(false);
     wsRef.current = ws;
 
     return () => {
@@ -168,7 +198,6 @@ export default function TradePage({
     };
   }, [tradeId, fetchTrade, fetchMessages]);
 
-  // Initial fetch + polling fallback
   useEffect(() => {
     fetchTrade();
     fetchMessages();
@@ -185,7 +214,6 @@ export default function TradePage({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Countdown timer
   useEffect(() => {
     if (!trade) return;
     if (!["INITIATED", "PAYMENT_SENT"].includes(trade.status)) return;
@@ -218,9 +246,7 @@ export default function TradePage({
       setNewMessage("");
     } else {
       try {
-        await api.post(`/trades/${tradeId}/messages`, {
-          message: newMessage,
-        });
+        await api.post(`/trades/${tradeId}/messages`, { message: newMessage });
         setNewMessage("");
         fetchMessages();
       } catch {
@@ -246,6 +272,18 @@ export default function TradePage({
     }
   };
 
+  const handleDisputeSubmit = async () => {
+    if (!disputeReason.trim()) {
+      toast.error("Please provide a reason for the dispute");
+      return;
+    }
+    setDisputeSubmitting(true);
+    await updateStatus("DISPUTED", disputeReason);
+    setDisputeSubmitting(false);
+    setDisputeOpen(false);
+    setDisputeReason("");
+  };
+
   const handlePaymentProof = async (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
@@ -261,6 +299,29 @@ export default function TradePage({
       fetchTrade();
     } catch {
       toast.error("Upload failed");
+    }
+  };
+
+  const handleReviewSubmit = async () => {
+    setReviewSubmitting(true);
+    try {
+      const counterpartyUsername =
+        trade?.is_buyer
+          ? trade?.seller_info?.username
+          : trade?.buyer_info?.username;
+      await api.post(`/users/${counterpartyUsername}/reviews`, {
+        trade_id: tradeId,
+        rating: reviewRating,
+        comment: reviewComment,
+      });
+      toast.success("Review submitted!");
+      setReviewSubmitted(true);
+      setReviewOpen(false);
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      toast.error(axiosErr?.response?.data?.detail || "Failed to submit review");
+    } finally {
+      setReviewSubmitting(false);
     }
   };
 
@@ -285,14 +346,11 @@ export default function TradePage({
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Navbar />
-      <main
-        className="max-w-7xl mx-auto px-4 py-6 w-full"
-        data-testid="trade-page"
-      >
+      <main className="max-w-7xl mx-auto px-4 py-6 w-full" data-testid="trade-page">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Panel - Trade Details */}
-          <div className="lg:col-span-7">
-            <div className="bg-card rounded-2xl p-6 border border-border mb-6">
+          {/* Left Panel */}
+          <div className="lg:col-span-7 flex flex-col gap-6">
+            <div className="bg-card rounded-2xl p-6 border border-border">
               <div className="flex items-center justify-between mb-4">
                 <h2
                   className="font-sans text-xl font-bold text-foreground"
@@ -312,9 +370,7 @@ export default function TradePage({
 
               {/* Timer */}
               {timeLeft &&
-                !["COMPLETED", "CANCELLED", "EXPIRED"].includes(
-                  trade.status
-                ) && (
+                !["COMPLETED", "CANCELLED", "EXPIRED"].includes(trade.status) && (
                   <div
                     className={`flex items-center gap-2 mb-4 p-3 rounded-xl text-sm font-medium ${
                       isTimerWarning
@@ -335,46 +391,22 @@ export default function TradePage({
               {/* Trade Info Grid */}
               <div className="grid grid-cols-2 gap-4 mb-6">
                 {[
-                  {
-                    label: "Amount",
-                    value: `${trade.amount_usdt} USDT`,
-                  },
-                  {
-                    label: "Total INR",
-                    value: `\u20B9${trade.amount_inr?.toFixed(2)}`,
-                  },
-                  {
-                    label: "Rate",
-                    value: `1 USDT = \u20B9${trade.price_inr}`,
-                  },
-                  {
-                    label: "Payment Method",
-                    value: trade.payment_method,
-                  },
+                  { label: "Amount", value: `${trade.amount_usdt} USDT` },
+                  { label: "Total INR", value: `\u20B9${trade.amount_inr?.toFixed(2)}` },
+                  { label: "Rate", value: `1 USDT = \u20B9${trade.price_inr}` },
+                  { label: "Payment Method", value: trade.payment_method },
                 ].map((item) => (
-                  <div
-                    key={item.label}
-                    className="p-4 bg-surface rounded-xl"
-                  >
-                    <p className="text-xs text-muted-foreground">
-                      {item.label}
-                    </p>
-                    <p className="text-sm font-bold text-foreground mt-0.5">
-                      {item.value}
-                    </p>
+                  <div key={item.label} className="p-4 bg-surface rounded-xl">
+                    <p className="text-xs text-muted-foreground">{item.label}</p>
+                    <p className="text-sm font-bold text-foreground mt-0.5">{item.value}</p>
                   </div>
                 ))}
               </div>
 
-              {/* Trade Terms */}
               {trade.trade_terms && (
                 <div className="p-4 bg-surface rounded-xl mb-6">
-                  <p className="text-xs text-muted-foreground mb-1">
-                    Trade Terms
-                  </p>
-                  <p className="text-sm text-foreground">
-                    {trade.trade_terms}
-                  </p>
+                  <p className="text-xs text-muted-foreground mb-1">Trade Terms</p>
+                  <p className="text-sm text-foreground">{trade.trade_terms}</p>
                 </div>
               )}
 
@@ -404,8 +436,7 @@ export default function TradePage({
                 )}
                 {trade.status === "PAYMENT_SENT" && trade.is_buyer && (
                   <div className="p-4 bg-amber-500/10 rounded-xl text-amber-400 text-sm flex items-center gap-2">
-                    <Clock className="size-4" /> Waiting for seller to confirm
-                    payment...
+                    <Clock className="size-4" /> Waiting for seller to confirm payment...
                   </div>
                 )}
                 {trade.status === "PAYMENT_SENT" && trade.is_seller && (
@@ -415,14 +446,10 @@ export default function TradePage({
                       className="flex-1 py-3 bg-success text-success-foreground font-semibold rounded-full hover:opacity-90 transition-colors"
                       data-testid="confirm-payment-btn"
                     >
-                      <CheckCircle className="size-4 inline mr-1" /> Release
-                      USDT
+                      <CheckCircle className="size-4 inline mr-1" /> Release USDT
                     </button>
                     <button
-                      onClick={() => {
-                        const reason = window.prompt("Reason for dispute:");
-                        if (reason) updateStatus("DISPUTED", reason);
-                      }}
+                      onClick={() => setDisputeOpen(true)}
                       className="flex-1 py-3 bg-destructive text-destructive-foreground font-semibold rounded-full hover:opacity-90 transition-colors"
                       data-testid="dispute-btn"
                     >
@@ -435,8 +462,7 @@ export default function TradePage({
                     className="p-4 bg-success/10 rounded-xl text-success text-sm flex items-center gap-2"
                     data-testid="trade-completed-msg"
                   >
-                    <CheckCircle className="size-5" /> Trade Completed
-                    Successfully!
+                    <CheckCircle className="size-5" /> Trade Completed Successfully!
                   </div>
                 )}
                 {trade.status === "DISPUTED" && (
@@ -444,8 +470,8 @@ export default function TradePage({
                     className="p-4 bg-destructive/10 rounded-xl text-destructive text-sm flex items-center gap-2"
                     data-testid="trade-disputed-msg"
                   >
-                    <AlertTriangle className="size-5" /> Trade under review by
-                    admin. Reason: {trade.dispute_reason}
+                    <AlertTriangle className="size-5" /> Trade under review by admin.
+                    Reason: {trade.dispute_reason}
                   </div>
                 )}
                 {trade.status === "EXPIRED" && (
@@ -453,16 +479,13 @@ export default function TradePage({
                     className="p-4 bg-muted rounded-xl text-muted-foreground text-sm flex items-center gap-2"
                     data-testid="trade-expired-msg"
                   >
-                    <Clock className="size-5" /> Trade expired - payment window
-                    exceeded. USDT returned to seller.
+                    <Clock className="size-5" /> Trade expired — payment window exceeded.
+                    USDT returned to seller.
                   </div>
                 )}
                 {trade.status === "PAYMENT_SENT" && trade.is_buyer && (
                   <button
-                    onClick={() => {
-                      const reason = window.prompt("Reason for dispute:");
-                      if (reason) updateStatus("DISPUTED", reason);
-                    }}
+                    onClick={() => setDisputeOpen(true)}
                     className="w-full py-2 border border-destructive/40 text-destructive font-medium rounded-full hover:bg-destructive/10 transition-colors text-sm"
                   >
                     Open Dispute
@@ -471,11 +494,38 @@ export default function TradePage({
               </div>
             </div>
 
+            {/* Leave a Review — shown only when trade COMPLETED */}
+            {trade.status === "COMPLETED" && !reviewSubmitted && (
+              <div className="bg-card rounded-2xl p-6 border border-border">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-foreground">Leave a Review</h3>
+                    <p className="text-sm text-muted-foreground mt-0.5">
+                      Rate your experience with{" "}
+                      {trade.is_buyer
+                        ? trade.seller_info?.username
+                        : trade.buyer_info?.username}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setReviewOpen(true)}
+                    className="px-5 py-2 bg-primary text-primary-foreground text-sm font-semibold rounded-full hover:opacity-90 transition-opacity"
+                    data-testid="leave-review-btn"
+                  >
+                    Write Review
+                  </button>
+                </div>
+              </div>
+            )}
+            {trade.status === "COMPLETED" && reviewSubmitted && (
+              <div className="bg-success/10 rounded-2xl p-4 border border-success/20 flex items-center gap-2 text-success text-sm font-medium">
+                <CheckCircle className="size-4" /> Review submitted. Thank you!
+              </div>
+            )}
+
             {/* Trade Details Panel */}
             <div className="bg-card rounded-2xl p-6 border border-border">
-              <h3 className="font-semibold text-foreground mb-3">
-                Trade Details
-              </h3>
+              <h3 className="font-semibold text-foreground mb-3">Trade Details</h3>
               <div className="space-y-2 text-sm">
                 {[
                   {
@@ -486,32 +536,18 @@ export default function TradePage({
                       </span>
                     ),
                   },
-                  {
-                    label: "Network",
-                    value: trade.network,
-                  },
-                  {
-                    label: "Payment Window",
-                    value: `${trade.payment_window_mins} minutes`,
-                  },
-                  {
-                    label: "Created",
-                    value: new Date(trade.created_at).toLocaleString(),
-                  },
+                  { label: "Network", value: trade.network },
+                  { label: "Payment Window", value: `${trade.payment_window_mins} minutes` },
+                  { label: "Created", value: new Date(trade.created_at).toLocaleString() },
                 ].map((row) => (
-                  <div
-                    key={row.label}
-                    className="flex justify-between items-center"
-                  >
+                  <div key={row.label} className="flex justify-between items-center">
                     <span className="text-muted-foreground">{row.label}</span>
                     <span className="text-foreground">{row.value}</span>
                   </div>
                 ))}
                 {trade.payment_proof_url && (
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">
-                      Payment Proof
-                    </span>
+                    <span className="text-muted-foreground">Payment Proof</span>
                     <a
                       href={`${API_BASE}${trade.payment_proof_url}`}
                       target="_blank"
@@ -526,7 +562,7 @@ export default function TradePage({
             </div>
           </div>
 
-          {/* Right Panel - Chat */}
+          {/* Right Panel — Chat */}
           <div className="lg:col-span-5">
             <div
               className="bg-card rounded-2xl border border-border flex flex-col h-[calc(100vh-120px)] sticky top-20"
@@ -535,14 +571,9 @@ export default function TradePage({
               <div className="p-4 border-b border-border flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <MessageCircle className="size-5 text-brand" />
-                  <h3 className="font-semibold text-foreground">
-                    Trade Chat
-                  </h3>
+                  <h3 className="font-semibold text-foreground">Trade Chat</h3>
                 </div>
-                <div
-                  className="flex items-center gap-1 text-xs"
-                  data-testid="ws-status"
-                >
+                <div className="flex items-center gap-1 text-xs" data-testid="ws-status">
                   {wsConnected ? (
                     <>
                       <Wifi className="size-3 text-success" />
@@ -557,7 +588,6 @@ export default function TradePage({
                 </div>
               </div>
 
-              {/* Messages */}
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {messages.map((msg) => (
                   <div
@@ -595,22 +625,19 @@ export default function TradePage({
 
               {/* Quick Replies */}
               <div className="px-4 py-2 border-t border-border flex gap-2 overflow-x-auto">
-                {[
-                  "Payment sent",
-                  "Please check your account",
-                  "Waiting for confirmation",
-                ].map((qr) => (
-                  <button
-                    key={qr}
-                    onClick={() => setNewMessage(qr)}
-                    className="px-3 py-1 bg-muted text-muted-foreground text-xs rounded-full whitespace-nowrap hover:text-foreground transition-colors"
-                  >
-                    {qr}
-                  </button>
-                ))}
+                {["Payment sent", "Please check your account", "Waiting for confirmation"].map(
+                  (qr) => (
+                    <button
+                      key={qr}
+                      onClick={() => setNewMessage(qr)}
+                      className="px-3 py-1 bg-muted text-muted-foreground text-xs rounded-full whitespace-nowrap hover:text-foreground transition-colors"
+                    >
+                      {qr}
+                    </button>
+                  )
+                )}
               </div>
 
-              {/* Input */}
               <form
                 onSubmit={sendMessage}
                 className="p-4 border-t border-border flex gap-2"
@@ -618,7 +645,7 @@ export default function TradePage({
                 <input
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
-                  className="flex-1 px-4 py-2 bg-background border border-input rounded-full text-sm text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none"
+                  className="flex-1 px-4 py-2 bg-background border border-input rounded-full text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
                   placeholder="Type a message..."
                   data-testid="chat-message-input"
                 />
@@ -634,6 +661,90 @@ export default function TradePage({
           </div>
         </div>
       </main>
+
+      {/* Dispute Dialog */}
+      <AlertDialog open={disputeOpen} onOpenChange={setDisputeOpen}>
+        <AlertDialogContent className="bg-card border-border">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-foreground">Open a Dispute</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">
+              Please describe why you are opening a dispute. An admin will review your case.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Textarea
+            value={disputeReason}
+            onChange={(e) => setDisputeReason(e.target.value)}
+            placeholder="Describe the issue in detail..."
+            rows={4}
+            className="bg-surface border-input text-foreground placeholder:text-muted-foreground resize-none"
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-border text-foreground hover:bg-muted">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDisputeSubmit}
+              disabled={disputeSubmitting}
+              className="bg-destructive text-destructive-foreground hover:opacity-90"
+            >
+              {disputeSubmitting ? "Submitting..." : "Submit Dispute"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Review Dialog */}
+      <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
+        <DialogContent className="bg-card border-border">
+          <DialogHeader>
+            <DialogTitle className="text-foreground">Leave a Review</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <p className="text-sm text-muted-foreground mb-2">Rating</p>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4, 5].map((s) => (
+                  <button key={s} onClick={() => setReviewRating(s)}>
+                    <Star
+                      className={`size-7 transition-colors ${
+                        s <= reviewRating
+                          ? "text-amber-400 fill-amber-400"
+                          : "text-muted-foreground"
+                      }`}
+                    />
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground mb-2">Comment (optional)</p>
+              <Textarea
+                value={reviewComment}
+                onChange={(e) => setReviewComment(e.target.value)}
+                placeholder="Share your experience..."
+                rows={3}
+                className="bg-surface border-input text-foreground placeholder:text-muted-foreground resize-none"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <button
+              onClick={() => setReviewOpen(false)}
+              className="px-5 py-2 border border-border text-foreground text-sm rounded-full hover:bg-muted transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleReviewSubmit}
+              disabled={reviewSubmitting}
+              className="px-5 py-2 bg-primary text-primary-foreground text-sm font-semibold rounded-full hover:opacity-90 transition-opacity disabled:opacity-50"
+              data-testid="submit-review-btn"
+            >
+              {reviewSubmitting ? "Submitting..." : "Submit Review"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
