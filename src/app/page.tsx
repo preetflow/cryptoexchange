@@ -91,7 +91,7 @@ export default function HomePage() {
           </div>
 
           <Link
-            href="/buy"
+            href="/register"
             className="inline-block px-10 py-4 bg-primary text-primary-foreground font-semibold text-lg rounded-full hover:opacity-90 transition-all hover:scale-105"
             data-testid="start-trading-btn"
           >

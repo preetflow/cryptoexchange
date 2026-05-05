@@ -29,14 +29,19 @@ export default function RegisterPage() {
       toast.success("Account created successfully!");
       router.push("/dashboard");
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { detail?: unknown } } };
+      const axiosErr = err as {
+        response?: { data?: { detail?: unknown } };
+        message?: string;
+      };
       const detail = axiosErr?.response?.data?.detail;
       const msg =
         typeof detail === "string"
           ? detail
           : Array.isArray(detail)
-          ? detail.map((e: { msg: string }) => e.msg).join(" ")
-          : "Registration failed";
+          ? detail.map((e: { msg: string }) => e.msg).join(", ")
+          : typeof axiosErr?.message === "string" && axiosErr.message !== "Network Error"
+          ? axiosErr.message
+          : "Registration failed. Please try again.";
       setError(msg);
     } finally {
       setLoading(false);
